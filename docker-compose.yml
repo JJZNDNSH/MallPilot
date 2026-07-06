@@ -1,0 +1,134 @@
+# MallPilot 综合电商导购助手 Docker Compose 服务编排
+# 保留 Redis、ChromaDB、Prometheus 与 Nginx 结构，并新增 SQLite 数据卷挂载。
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: mallpilot-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-mallpilot123}
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - mallpilot-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-mallpilot123}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chromadb:
+    image: chromadb/chroma:0.5.23
+    container_name: mallpilot-chromadb
+    ports:
+      - "8001:8000"
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+      - ANONYMIZED_TELEMETRY=FALSE
+    volumes:
+      - chromadb-data:/chroma/chroma
+    restart: unless-stopped
+    networks:
+      - mallpilot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/v1/heartbeat || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mallpilot-prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=200h"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    networks:
+      - mallpilot-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  mallpilot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: mallpilot-app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-mallpilot123}@redis:6379/0
+      - CHROMA_PERSIST_DIRECTORY=/app/data/chroma
+      - EVAL_BASELINE_PATH=/app/data/eval/baseline.json
+      - MALLPILOT_DB_PATH=/app/data/sqlite/mallpilot.db
+      - MALLPILOT_SKILLS_DIR=/app/skills
+    volumes:
+      - ./data/chroma:/app/data/chroma
+      - ./data/eval:/app/data/eval
+      - ./data/sqlite:/app/data/sqlite
+      - ./skills:/app/skills
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - mallpilot-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+  nginx:
+    image: nginx:alpine
+    container_name: mallpilot-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - nginx-logs:/var/log/nginx
+    depends_on:
+      mallpilot:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - mallpilot-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  mallpilot-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  redis-data:
+  chromadb-data:
+  prometheus-data:
+  nginx-logs:

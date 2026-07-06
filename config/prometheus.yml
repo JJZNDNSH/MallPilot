@@ -1,0 +1,23 @@
+# Prometheus 配置文件 - MallPilot 综合电商导购助手
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: "mallpilot"
+    environment: "production"
+
+rule_files:
+  - "alerts/*.yml"
+
+scrape_configs:
+  - job_name: "mallpilot-app"
+    static_configs:
+      - targets: ["mallpilot:8000"]
+        labels:
+          service: "mallpilot"
+    scrape_interval: 10s
+    metrics_path: "/metrics"
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# 环境变量
+# 做什么：忽略本地敏感配置；为什么：避免把密钥和私有环境配置提交到仓库。
+.env
+
+# 数据与日志
+# 做什么：默认忽略本地运行数据；为什么：避免把数据库、向量缓存和日志提交到仓库。
+data/*
+# 做什么：保留演示知识文档和评测基线；为什么：这些文件属于项目交付内容。
+!data/demo_docs/
+!data/demo_docs/**
+!data/eval/
+!data/eval/**
+logs/
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker 生成副本
+# 做什么：忽略误生成的脚本副本；为什么：保留正式构建脚本参与版本管理。
+build-image-*.sh
+
+# Backup
+*~
+*.bak
+docker-compose(1).yml

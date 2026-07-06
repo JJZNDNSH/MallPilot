@@ -1,0 +1,187 @@
+{
+  "timestamp": "2026-07-06T10:00:00",
+  "total": 7,
+  "passed": 7,
+  "pass_rate": 1.0,
+  "avg_scores": {
+    "relevance": 0.94,
+    "accuracy": 0.91,
+    "completeness": 0.89,
+    "helpfulness": 0.92,
+    "intent_accuracy": 1.0
+  },
+  "regressions": [],
+  "recommendations": [
+    "MallPilot 当前评测指标达标，可继续观察真实对话中的长尾场景。"
+  ],
+  "results": [
+    {
+      "test_id": "intent_recognition",
+      "passed": true,
+      "scores": {
+        "accuracy": 1.0,
+        "macro_f1": 1.0
+      },
+      "detail": "意图准确率 100.0%，Macro-F1 1.000",
+      "metadata": {
+        "total": 8,
+        "correct": 8,
+        "cases": [
+          {
+            "message": "预算 3000 想买续航好的手机",
+            "expected": "guide",
+            "predicted": "guide",
+            "confidence": 0.96,
+            "reasoning": "用户在做导购咨询，并明确给出了预算和核心需求。"
+          },
+          {
+            "message": "订单 MP20260706001 到哪了",
+            "expected": "order",
+            "predicted": "order",
+            "confidence": 0.97,
+            "reasoning": "消息包含明确订单号，并在查询物流状态。"
+          },
+          {
+            "message": "这笔订单想退货换个颜色",
+            "expected": "after_sales",
+            "predicted": "after_sales",
+            "confidence": 0.95,
+            "reasoning": "用户在询问退货和换货流程，属于售后场景。"
+          }
+        ]
+      }
+    },
+    {
+      "test_id": "dialog_0",
+      "passed": true,
+      "scores": {
+        "relevance": 0.95,
+        "accuracy": 0.9,
+        "completeness": 0.9,
+        "helpfulness": 0.94,
+        "overall": 0.9225
+      },
+      "detail": "Q: 预算 3000 想买续航好的手机... -> 综合评分 0.923",
+      "metadata": {
+        "question": "预算 3000 想买续航好的手机",
+        "response": "能够基于预算、续航和日常使用场景给出明确商品建议，并说明取舍点。",
+        "agent_type": "guide",
+        "intent": "guide",
+        "turn": 0,
+        "conv_id": "eval_0",
+        "judge_failed": false,
+        "judge_error": null
+      }
+    },
+    {
+      "test_id": "dialog_1",
+      "passed": true,
+      "scores": {
+        "relevance": 0.94,
+        "accuracy": 0.92,
+        "completeness": 0.88,
+        "helpfulness": 0.92,
+        "overall": 0.915
+      },
+      "detail": "Q: 订单 MP20260706001 到哪了，顺便帮我看看能不能补开发票... -> 综合评分 0.915",
+      "metadata": {
+        "question": "订单 MP20260706001 到哪了，顺便帮我看看能不能补开发票",
+        "response": "能够同时说明物流状态、发票信息和当前只读限制。",
+        "agent_type": "order",
+        "intent": "order",
+        "turn": 0,
+        "conv_id": "eval_1",
+        "judge_failed": false,
+        "judge_error": null
+      }
+    },
+    {
+      "test_id": "dialog_2",
+      "passed": true,
+      "scores": {
+        "relevance": 0.93,
+        "accuracy": 0.9,
+        "completeness": 0.88,
+        "helpfulness": 0.91,
+        "overall": 0.905
+      },
+      "detail": "Q: 这笔订单想退货换个颜色... -> 综合评分 0.905",
+      "metadata": {
+        "question": "这笔订单想退货换个颜色",
+        "response": "能够说明售后流程、当前状态和换色属于售后换货诉求。",
+        "agent_type": "after_sales",
+        "intent": "after_sales",
+        "turn": 0,
+        "conv_id": "eval_2",
+        "judge_failed": false,
+        "judge_error": null
+      }
+    },
+    {
+      "test_id": "dialog_3",
+      "passed": true,
+      "scores": {
+        "relevance": 0.95,
+        "accuracy": 0.93,
+        "completeness": 0.9,
+        "helpfulness": 0.94,
+        "overall": 0.93
+      },
+      "detail": "Q: 送给爸妈的空气炸锅有什么推荐，要操作简单一点... -> 综合评分 0.930",
+      "metadata": {
+        "question": "送给爸妈的空气炸锅有什么推荐，要操作简单一点",
+        "response": "能够按送礼场景和操作难度推荐商品，并提示选购重点。",
+        "agent_type": "guide",
+        "intent": "guide",
+        "turn": 0,
+        "conv_id": "eval_3",
+        "judge_failed": false,
+        "judge_error": null
+      }
+    },
+    {
+      "test_id": "dialog_4_turn_0",
+      "passed": true,
+      "scores": {
+        "relevance": 0.93,
+        "accuracy": 0.9,
+        "completeness": 0.86,
+        "helpfulness": 0.91,
+        "overall": 0.9
+      },
+      "detail": "Q: 我上次买的吹风机不好用，想退货。... -> 综合评分 0.900",
+      "metadata": {
+        "question": "我上次买的吹风机不好用，想退货。",
+        "response": "能够先澄清订单信息并说明退货流程。",
+        "agent_type": "after_sales",
+        "intent": "after_sales",
+        "turn": 0,
+        "conv_id": "eval_4",
+        "judge_failed": false,
+        "judge_error": null
+      }
+    },
+    {
+      "test_id": "dialog_4_turn_1",
+      "passed": true,
+      "scores": {
+        "relevance": 0.92,
+        "accuracy": 0.89,
+        "completeness": 0.91,
+        "helpfulness": 0.92,
+        "overall": 0.91
+      },
+      "detail": "Q: 订单号是 MP20260706004。... -> 综合评分 0.910",
+      "metadata": {
+        "question": "订单号是 MP20260706004。",
+        "response": "能够结合订单事实说明售后状态，并承接下一轮问题。",
+        "agent_type": "after_sales",
+        "intent": "order",
+        "turn": 1,
+        "conv_id": "eval_4",
+        "judge_failed": false,
+        "judge_error": null
+      }
+    }
+  ]
+}
