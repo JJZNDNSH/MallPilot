@@ -1,0 +1,14 @@
+# MallPilot 组件模式 Prometheus 配置
+# 做什么：只抓取组件模式下稳定存在的 Prometheus 自身指标。
+# 为什么：本地应用不在虚拟机容器网络内，避免默认去抓不存在的 mallpilot 容器。
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: "mallpilot"
+    environment: "components"
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

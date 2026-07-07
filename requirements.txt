@@ -6,7 +6,7 @@ uvicorn[standard]==0.32.1
 pydantic==2.10.3
 python-multipart==0.0.12
 redis==5.2.1
-chromadb==0.5.23
+chromadb==0.5.3
 prometheus-client==0.21.1
 httpx==0.28.1
 python-dotenv==1.0.1
