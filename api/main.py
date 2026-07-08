@@ -26,7 +26,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 
-load_dotenv()
+# 做什么：加载 .env 并允许覆盖系统同名环境变量。
+# 为什么：确保本地调试时以项目内 .env 配置为准，避免被机器上的旧变量劫持。
+load_dotenv(override=True)
 
 logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")),
@@ -75,6 +77,42 @@ def _get_bool_env(name: str, default: bool, legacy_name: str = "") -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+# 做什么：归一化用于 Anthropic SDK 的 base_url。
+# 为什么：避免把 OpenAI 兼容地址直接传给 Anthropic SDK 后在运行时才报错。
+def _normalize_anthropic_base_url(base_url: str) -> str:
+    normalized = base_url.strip().rstrip("/")
+    if not normalized:
+        return ""
+
+    # 做什么：把 DashScope 的 OpenAI 兼容入口改写为 Anthropic 兼容入口。
+    # 为什么：当前项目统一使用 Anthropic SDK，必须命中 `/apps/anthropic` 才能走 Messages 接口。
+    if "/compatible-mode" in normalized and ("dashscope.aliyuncs.com" in normalized or ".maas.aliyuncs.com" in normalized):
+        return normalized.split("/compatible-mode", 1)[0] + "/apps/anthropic"
+    return normalized
+
+
+# 做什么：从 base_url 推断当前接入的服务商。
+# 为什么：在启动阶段做最小必要的模型兼容性校验，尽早暴露明显错配。
+def _provider_from_base_url(base_url: str) -> str:
+    lowered = base_url.lower()
+    if "moonshot" in lowered:
+        return "moonshot"
+    if "dashscope.aliyuncs.com" in lowered or ".maas.aliyuncs.com" in lowered:
+        return "dashscope"
+    return "custom"
+
+
+# 做什么：校验模型名是否与当前服务商匹配。
+# 为什么：把“模型不存在/无权限”这类确定性配置错误提前到启动阶段拦住。
+def _validate_anthropic_model(model: str, base_url: str) -> None:
+    provider = _provider_from_base_url(base_url)
+    normalized_model = model.strip().lower()
+    if provider == "moonshot" and normalized_model and not normalized_model.startswith(("kimi-", "moonshot-")):
+        raise RuntimeError(
+            f"ANTHROPIC_MODEL={model} 与 Moonshot 接入不匹配。请改用 Moonshot 支持的 Kimi/Moonshot 系列模型，或改回与当前 SDK 兼容的服务商配置。"
+        )
+
+
 # 做什么：组装 LLM 配置。
 # 为什么：减少不同入口对同一组模型配置的重复读取。
 def _anthropic_cfg() -> Dict[str, Any]:
@@ -85,10 +123,32 @@ def _anthropic_cfg() -> Dict[str, Any]:
         "api_key": api_key,
         "model": _get_env("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022", "CLAUDE_MODEL"),
     }
-    base_url = os.getenv("ANTHROPIC_BASE_URL", "").strip()
+    raw_base_url = os.getenv("ANTHROPIC_BASE_URL", "").strip()
+    base_url = _normalize_anthropic_base_url(raw_base_url)
     if base_url:
+        # 做什么：记录被自动纠正的兼容地址。
+        # 为什么：方便排查“环境里填的是一个地址，实际请求却去了另一个地址”的现象。
+        if raw_base_url and raw_base_url.rstrip("/") != base_url:
+            logger.warning("ANTHROPIC_BASE_URL 已自动修正: %s -> %s", raw_base_url, base_url)
+        # 做什么：在统一配置出口校验模型与服务商是否兼容。
+        # 为什么：避免同一份错误配置被多个组件复用后重复触发 404。
+        _validate_anthropic_model(config["model"], base_url)
         config["base_url"] = base_url
     return config
+
+
+# 做什么：组装 MySQL 业务数据配置。
+# 为什么：把商品、订单、售后和工具层统一切到 MySQL 真实数据源。
+def _commerce_cfg() -> Dict[str, Any]:
+    return {
+        "host": _get_env("MALLPILOT_MYSQL_HOST", "127.0.0.1"),
+        "port": int(_get_env("MALLPILOT_MYSQL_PORT", "3306")),
+        "user": _get_env("MALLPILOT_MYSQL_USER", "mallpilot"),
+        "password": _get_env("MALLPILOT_MYSQL_PASSWORD", "mallpilot123"),
+        "database": _get_env("MALLPILOT_MYSQL_DATABASE", "mallpilot"),
+        "charset": _get_env("MALLPILOT_MYSQL_CHARSET", "utf8mb4"),
+        "connect_timeout": int(_get_env("MALLPILOT_MYSQL_CONNECT_TIMEOUT", "5")),
+    }
 
 
 @asynccontextmanager
@@ -108,6 +168,7 @@ async def lifespan(app: FastAPI):
     from mcp.tool_manager import MCPToolManager, Tool
     from memory.conversation_memory import MemoryManager
     from monitor.performance_monitor import PerformanceMonitor
+    from tools.tool_registry import register_commerce_tools
 
     cfg = _anthropic_cfg()
     logger.info("MallPilot 模型: %s base_url: %s", cfg["model"], cfg.get("base_url", "(官方)"))
@@ -127,15 +188,18 @@ async def lifespan(app: FastAPI):
     _skill_manager = SkillManager(root_dir=skills_dir, max_prompt_chars=max_prompt_chars)
     _skill_manager.load()
 
-    # 做什么：初始化结构化商品与订单库。
-    # 为什么：让导购与订单事实落到 SQLite，而不是靠 prompt 编造。
-    db_path = _get_env(
-        "MALLPILOT_DB_PATH",
-        str(pathlib.Path(_ROOT) / "data" / "sqlite" / "mallpilot.db"),
-    )
+    # 做什么：初始化结构化商品、订单与售后库。
+    # 为什么：让导购与订单事实落到 MySQL，而不是靠 prompt 编造。
+    commerce_cfg = _commerce_cfg()
     _commerce_store = CommerceStore(
-        db_path=db_path,
+        host=commerce_cfg["host"],
+        port=commerce_cfg["port"],
+        user=commerce_cfg["user"],
+        password=commerce_cfg["password"],
+        database=commerce_cfg["database"],
         seed_demo_data=_get_bool_env("MALLPILOT_SEED_DEMO_DATA", True),
+        charset=commerce_cfg["charset"],
+        connect_timeout=commerce_cfg["connect_timeout"],
     )
     _commerce_store.initialize()
     logger.info("MallPilot 结构化数据已初始化: %s", _commerce_store.stats())
@@ -188,16 +252,6 @@ async def lifespan(app: FastAPI):
             }
         ]
 
-    # 做什么：商品搜索降级时返回空候选。
-    # 为什么：导购搜索失败时不阻塞整条主对话链路。
-    def product_fallback(params: Dict[str, Any], context: Optional[Dict[str, Any]], error: str):
-        return [{"fallback": True, "error": error}]
-
-    # 做什么：订单查询降级时返回可解释空结果。
-    # 为什么：订单数据不可用时仍要给出清晰的下一步提示。
-    def order_fallback(params: Dict[str, Any], context: Optional[Dict[str, Any]], error: str):
-        return {"fallback": True, "error": error, "message": "订单库暂时不可用，请稍后重试或转人工核验。"}
-
     # 做什么：注册知识库搜索工具。
     # 为什么：保留查询改写、并行召回、重排与 fallback 亮点。
     _tool_manager.register(
@@ -218,66 +272,9 @@ async def lifespan(app: FastAPI):
             fallback=knowledge_fallback,
         )
     )
-
-    # 做什么：注册结构化商品搜索工具。
-    # 为什么：让导购问题也能走统一工具框架。
-    async def product_search_handler(params: Dict[str, Any], context: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        return _commerce_store.search_products(
-            query=str(params.get("query", "")),
-            category=str(params.get("category", "")).strip() or None,
-            min_price=float(params["min_price"]) if params.get("min_price") is not None else None,
-            max_price=float(params["max_price"]) if params.get("max_price") is not None else None,
-            limit=int(params.get("limit", 5)),
-        )
-
-    _tool_manager.register(
-        Tool(
-            name="product_search",
-            description="搜索 MallPilot 商品库",
-            handler=product_search_handler,
-            schema={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "category": {"type": "string"},
-                    "min_price": {"type": "number"},
-                    "max_price": {"type": "number"},
-                    "limit": {"type": "integer"},
-                },
-            },
-            cache_ttl=180.0,
-            fallback=product_fallback,
-        )
-    )
-
-    # 做什么：注册结构化订单查询工具。
-    # 为什么：让订单与售后事实也能走统一工具层和监控链路。
-    async def order_lookup_handler(params: Dict[str, Any], context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        order_id = str(params.get("order_id", "")).strip()
-        user_id = str(params.get("user_id", "")).strip()
-        if order_id:
-            order = _commerce_store.lookup_order(order_id=order_id, user_id=user_id or None)
-            return {"order": order}
-        recent_orders = _commerce_store.recent_orders(user_id=user_id, limit=int(params.get("limit", 2))) if user_id else []
-        return {"recent_orders": recent_orders}
-
-    _tool_manager.register(
-        Tool(
-            name="order_lookup",
-            description="查询 MallPilot 订单与售后数据",
-            handler=order_lookup_handler,
-            schema={
-                "type": "object",
-                "properties": {
-                    "order_id": {"type": "string"},
-                    "user_id": {"type": "string"},
-                    "limit": {"type": "integer"},
-                },
-            },
-            cache_ttl=60.0,
-            fallback=order_fallback,
-        )
-    )
+    # 做什么：集中注册导购、订单与售后工具。
+    # 为什么：让多角色工具统一收敛到 tools 目录，同时继续复用 MCPToolManager 的执行特色。
+    register_commerce_tools(_tool_manager, _commerce_store)
 
     # 做什么：初始化监控闭环。
     # 为什么：保留在线表现自动降权的技术亮点。
@@ -483,7 +480,7 @@ async def chat(req: ChatRequest):
 
 
 # 做什么：商品搜索演示接口。
-# 为什么：直接展示 SQLite 商品库能力，便于另一个 Codex 校验数据层是否正确接入。
+# 为什么：直接展示 MySQL 商品库能力，便于校验数据层是否正确接入。
 @app.post("/catalog/search")
 async def catalog_search(body: CatalogSearchRequest):
     if _commerce_store is None:
@@ -499,7 +496,7 @@ async def catalog_search(body: CatalogSearchRequest):
 
 
 # 做什么：订单查询演示接口。
-# 为什么：直接展示 SQLite 订单库能力，便于核对订单与明细演示数据。
+# 为什么：直接展示 MySQL 订单库能力，便于核对订单与明细演示数据。
 @app.post("/orders/lookup")
 async def orders_lookup(body: OrderLookupRequest):
     if _commerce_store is None:
@@ -679,7 +676,7 @@ async def _build_knowledge_context(message: str, top_k: int = 3) -> Tuple[str, b
 
 
 # 做什么：构建结构化商品与订单上下文。
-# 为什么：把 SQLite 中的商品和订单事实接入主对话链路。
+# 为什么：把 MySQL 中的商品和订单事实接入主对话链路。
 async def _build_structured_context(message: str, user_id: str) -> str:
     if _tool_manager is None or _commerce_store is None:
         return ""
@@ -691,6 +688,7 @@ async def _build_structured_context(message: str, user_id: str) -> str:
     if _should_use_catalog(message):
         category = _commerce_store._extract_category(message)
         budget = _commerce_store._extract_budget(message)
+        used_product = False  # 做什么：标记工具链路是否已经拿到可用商品结果；为什么：避免空结果时遗漏本地商品库兜底。
         product_result = await _tool_manager.call(
             "product_search",
             {
@@ -704,7 +702,6 @@ async def _build_structured_context(message: str, user_id: str) -> str:
         )
         if product_result.success and isinstance(product_result.data, list):
             product_lines = ["[商品库结果]"]
-            used_product = False
             for index, item in enumerate(product_result.data, start=1):
                 if not isinstance(item, dict) or item.get("fallback"):
                     continue
@@ -717,6 +714,12 @@ async def _build_structured_context(message: str, user_id: str) -> str:
             if used_product:
                 product_lines.append("请优先依据以上商品事实做推荐或对比，不要凭空补充不存在的参数。")
                 sections.append("\n".join(product_lines))
+        # 做什么：在工具结果为空时回退到本地商品库上下文构建。
+        # 为什么：复用商品库已有的预算放宽与语义兜底逻辑，避免模型脱离 MySQL 事实自由发挥。
+        if not used_product:
+            fallback_product_context = _commerce_store.build_product_context(message)
+            if fallback_product_context:
+                sections.append(fallback_product_context)
 
     # 做什么：订单与售后问题优先注入订单库事实。
     # 为什么：物流、发票、退款状态必须基于结构化订单数据回答。
@@ -817,9 +820,16 @@ async def _cli():
         base_url=cfg.get("base_url"),
         model=cfg["model"],
     )
+    commerce_cfg = _commerce_cfg()
     commerce_store = CommerceStore(
-        db_path=_get_env("MALLPILOT_DB_PATH", str(pathlib.Path(_ROOT) / "data" / "sqlite" / "mallpilot.db")),
+        host=commerce_cfg["host"],
+        port=commerce_cfg["port"],
+        user=commerce_cfg["user"],
+        password=commerce_cfg["password"],
+        database=commerce_cfg["database"],
         seed_demo_data=True,
+        charset=commerce_cfg["charset"],
+        connect_timeout=commerce_cfg["connect_timeout"],
     )
     commerce_store.initialize()
 

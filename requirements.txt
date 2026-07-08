@@ -10,3 +10,5 @@ chromadb==0.5.3
 prometheus-client==0.21.1
 httpx==0.28.1
 python-dotenv==1.0.1
+PyMySQL==1.1.1
+SQLAlchemy==2.0.36

@@ -1,7 +1,32 @@
 # MallPilot 组件专用 Docker Compose
-# 做什么：只启动 Redis、ChromaDB、Prometheus 三个基础组件。
-# 为什么：应用在本地运行时，虚拟机只需要承载公共依赖服务。
+# 做什么：只启动 Redis、ChromaDB、Prometheus 和 MySQL 四个基础组件。
+# 为什么：应用在本地运行时，虚拟机只需要承载公共依赖服务和业务数据源。
 services:
+  mysql:
+    image: mysql:8.4
+    container_name: mallpilot-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MALLPILOT_MYSQL_ROOT_PASSWORD:-mallpilot-root}
+      - MYSQL_DATABASE=${MALLPILOT_MYSQL_DATABASE:-mallpilot}
+      - MYSQL_USER=${MALLPILOT_MYSQL_USER:-mallpilot}
+      - MYSQL_PASSWORD=${MALLPILOT_MYSQL_PASSWORD:-mallpilot123}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - mallpilot-components-network
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u${MALLPILOT_MYSQL_USER:-mallpilot} -p${MALLPILOT_MYSQL_PASSWORD:-mallpilot123} --silent"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
   redis:
     image: redis:7-alpine
     container_name: mallpilot-redis
@@ -71,6 +96,7 @@ networks:
         - subnet: 172.29.0.0/16
 
 volumes:
+  mysql-data:
   redis-data:
   chromadb-data:
   prometheus-data:

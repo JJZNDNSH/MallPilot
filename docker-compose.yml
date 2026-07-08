@@ -1,6 +1,31 @@
 # MallPilot 综合电商导购助手 Docker Compose 服务编排
-# 保留 Redis、ChromaDB、Prometheus 与 Nginx 结构，并新增 SQLite 数据卷挂载。
+# 保留 Redis、ChromaDB、Prometheus 与 Nginx 结构，并新增 MySQL 业务数据服务。
 services:
+  mysql:
+    image: mysql:8.4
+    container_name: mallpilot-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MALLPILOT_MYSQL_ROOT_PASSWORD:-mallpilot-root}
+      - MYSQL_DATABASE=${MALLPILOT_MYSQL_DATABASE:-mallpilot}
+      - MYSQL_USER=${MALLPILOT_MYSQL_USER:-mallpilot}
+      - MYSQL_PASSWORD=${MALLPILOT_MYSQL_PASSWORD:-mallpilot123}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - mallpilot-network
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u${MALLPILOT_MYSQL_USER:-mallpilot} -p${MALLPILOT_MYSQL_PASSWORD:-mallpilot123} --silent"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
   redis:
     image: redis:7-alpine
     container_name: mallpilot-redis
@@ -76,15 +101,22 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-mallpilot123}@redis:6379/0
       - CHROMA_PERSIST_DIRECTORY=/app/data/chroma
       - EVAL_BASELINE_PATH=/app/data/eval/baseline.json
-      - MALLPILOT_DB_PATH=/app/data/sqlite/mallpilot.db
+      - MALLPILOT_MYSQL_HOST=mysql
+      - MALLPILOT_MYSQL_PORT=3306
+      - MALLPILOT_MYSQL_DATABASE=${MALLPILOT_MYSQL_DATABASE:-mallpilot}
+      - MALLPILOT_MYSQL_USER=${MALLPILOT_MYSQL_USER:-mallpilot}
+      - MALLPILOT_MYSQL_PASSWORD=${MALLPILOT_MYSQL_PASSWORD:-mallpilot123}
+      - MALLPILOT_MYSQL_CHARSET=${MALLPILOT_MYSQL_CHARSET:-utf8mb4}
+      - MALLPILOT_MYSQL_CONNECT_TIMEOUT=${MALLPILOT_MYSQL_CONNECT_TIMEOUT:-5}
       - MALLPILOT_SKILLS_DIR=/app/skills
     volumes:
       - ./data/chroma:/app/data/chroma
       - ./data/eval:/app/data/eval
-      - ./data/sqlite:/app/data/sqlite
       - ./skills:/app/skills
       - ./logs:/app/logs
     depends_on:
+      mysql:
+        condition: service_healthy
       redis:
         condition: service_healthy
       chromadb:
@@ -128,6 +160,7 @@ networks:
         - subnet: 172.28.0.0/16
 
 volumes:
+  mysql-data:
   redis-data:
   chromadb-data:
   prometheus-data:
