@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MallPilot</title>
+    <link rel="stylesheet" href="/chat/static/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="sessions" aria-label="会话">
+        <div class="brand">
+          <div class="brand-mark">MP</div>
+          <div>
+            <h1>MallPilot</h1>
+            <p>导购工作台</p>
+          </div>
+        </div>
+        <button class="new-chat" id="newChat" type="button">新会话</button>
+        <div class="session-list" id="sessionList">
+          <button class="session active" type="button">
+            <span>当前会话</span>
+            <small>待开始</small>
+          </button>
+        </div>
+      </aside>
+
+      <section class="conversation" aria-label="聊天">
+        <header class="topbar">
+          <div>
+            <h2>导购 Agent</h2>
+            <p id="turnStatus">Ready</p>
+          </div>
+          <a class="observe-link" href="/admin/observability">Trace</a>
+        </header>
+
+        <div class="messages" id="messages" aria-live="polite">
+          <div class="message assistant">
+            <div class="bubble">告诉我预算、品类、使用场景，我来筛选商品。</div>
+          </div>
+        </div>
+
+        <form class="composer" id="composer">
+          <textarea id="messageInput" rows="2" placeholder="例如：300 元以内，敏感肌可用的保湿精华"></textarea>
+          <button type="submit">发送</button>
+        </form>
+      </section>
+
+      <aside class="trace" aria-label="Trace">
+        <header>
+          <span>Trace</span>
+          <strong id="traceCount">0</strong>
+        </header>
+        <div class="trace-list" id="traceList"></div>
+      </aside>
+    </main>
+    <script src="/chat/static/app.js"></script>
+  </body>
+</html>
