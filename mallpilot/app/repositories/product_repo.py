@@ -26,8 +26,8 @@ class ProductRepository:
             raw_json=product,
         ))
 
-        # SKU 也使用 merge，确保同一个 sku_id 再导入时更新价格和属性。
         for sku in product.get("skus", []):
+            # SKU 使用 merge，确保重复导入时更新价格和属性。
             self.session.merge(ProductSku(
                 sku_id=sku["sku_id"],
                 product_id=product["product_id"],
@@ -39,14 +39,26 @@ class ProductRepository:
     def delete_chunks_for_product(self, product_id: str) -> None:
         self.session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.product_id == product_id))
 
-    # 保存商品知识块。
+    # 保存商品知识块，兼容无 embedding 的旧调用路径。
     def save_chunks(self, chunks: list[dict[str, Any]]) -> None:
-        for chunk in chunks:
+        self.save_chunks_with_embeddings(chunks, [None] * len(chunks))
+
+    # 保存商品知识块和对应 embedding。
+    def save_chunks_with_embeddings(
+        self,
+        chunks: list[dict[str, Any]],
+        embeddings: list[list[float] | None],
+    ) -> None:
+        if len(chunks) != len(embeddings):
+            raise ValueError("Chunk count and embedding count must match")
+
+        for chunk, embedding in zip(chunks, embeddings, strict=True):
             # 知识块使用新增记录，导入流程会先删除旧块再写入新块。
             self.session.add(KnowledgeChunk(
                 product_id=chunk["product_id"],
                 chunk_type=chunk["chunk_type"],
                 title=chunk.get("title", ""),
                 content=chunk.get("content", ""),
+                embedding=embedding,
                 metadata_json=chunk.get("metadata", {}),
             ))
