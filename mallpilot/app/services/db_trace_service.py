@@ -22,3 +22,8 @@ class DbTraceService:
     def list_events(self, turn_id: str) -> list[TraceEvent]:
         with self.session_factory() as session:
             return TraceRepository(session).list_by_turn(turn_id)
+
+    # 查询最近轮次列表，供观测页下拉框使用。
+    def list_turns(self, limit: int = 50) -> list[dict]:
+        with self.session_factory() as session:
+            return TraceRepository(session).list_turns(limit=limit)

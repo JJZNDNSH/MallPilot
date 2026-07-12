@@ -1,4 +1,6 @@
-from sqlalchemy import select
+from typing import Any
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from mallpilot.app.agent.schemas import TraceEvent
@@ -46,3 +48,30 @@ class TraceRepository:
             )
             for row in rows
         ]
+
+    # 查询最近可观测轮次，供前端下拉框选择。
+    def list_turns(self, limit: int = 50) -> list[dict[str, Any]]:
+        statement = (
+            select(
+                TraceEventRow.turn_id,
+                TraceEventRow.chat_id,
+                func.count(TraceEventRow.trace_id).label("event_count"),
+                func.min(TraceEventRow.timestamp).label("started_at"),
+            )
+            .group_by(TraceEventRow.turn_id, TraceEventRow.chat_id)
+            .order_by(func.min(TraceEventRow.timestamp))
+            .limit(limit)
+        )
+        rows = self.session.execute(statement).all()
+
+        turns: list[dict[str, Any]] = []
+        for index, row in enumerate(rows, start=1):
+            # 前端只展示 label，turn_id 作为内部加载 summary 的值。
+            turns.append({
+                "label": f"第 {index} 轮",
+                "turn_id": row.turn_id,
+                "chat_id": row.chat_id,
+                "event_count": int(row.event_count),
+                "started_at": row.started_at.isoformat() if row.started_at else None,
+            })
+        return turns
