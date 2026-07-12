@@ -1,162 +1,212 @@
-# Sprint 1 数据与持久化真实化设计
+# Sprint 1 真实导购闭环设计
 
 ## 背景
 
-MallPilot 已完成第一阶段 MVP：FastAPI 后端、SSE 聊天接口、意图路由、导购/问答/交易 mock Flow、混合检索雏形、可观测页面、SQLAlchemy 模型与仓储。当前不足是数据仍主要停留在内存 demo 和测试路径中，缺少真实数据库会话、迁移、命令行入库和后续 pgvector 检索所需的字段。
+MallPilot 第一阶段已经完成后端 MVP：FastAPI、SSE 聊天接口、意图路由、导购/问答/交易 Flow、混合检索雏形、可观测页面、SQLAlchemy 模型与仓储。当前仍是 demo 形态：商品检索主要在内存中完成，LLM、embedding、rerank 都是轻量占位，前端也只有可观测控制台。
 
-Sprint 1 的目标是把“可运行 demo”推进到“有真实数据底座”的工程状态，为后续数据库检索、真实 embedding、Trace 落库和前端联调提供稳定基础。
+Sprint 1 的新目标是把系统推进到“真实导购闭环”：商品数据切成知识块后写入 PostgreSQL + pgvector，通过百炼平台完成 LLM、文本 embedding 和 rerank，前端提供正式聊天界面，并继续保留可观测 Trace。
+
+## 用户确认的范围
+
+1. 本阶段直接把商品 chunk 写入 pgvector，不再用 JSON 字段临时存向量。
+2. 本阶段接入真实 LLM、真实 embedding 和真实 rerank。
+3. 大模型、embedding 模型、重排模型都使用百炼平台。
+4. API key 存放在本地 `.env`，`.env` 必须被 `.gitignore` 忽略。
+5. 本阶段要做正式前端界面，而不只做后端 API。
 
 ## 目标
 
-1. 提供统一数据库连接模块，应用和脚本都通过同一套 `engine / SessionLocal / get_db` 访问数据库。
-2. 引入 Alembic 迁移目录，首个 migration 创建商品、SKU、知识块和 Trace 表。
-3. 为知识块增加文本向量字段，为商品增加图片向量字段，先用 JSON 存储向量，后续切到 pgvector 时迁移成本可控。
-4. 提供可复用的商品入库 CLI，从 `/data/ecommerce_agent_dataset` 读取 JSON 并写入数据库。
-5. 提供数据库版 Trace 服务，后续聊天链路可以把每轮 LLM、SSE、检索 Trace 持久化。
-6. 保持现有 API 和 Flow 行为不破坏，第一阶段所有测试继续通过。
+1. 提供统一数据库连接模块，应用、脚本和测试都通过同一套 `engine / SessionLocal / get_db` 访问数据库。
+2. 引入 Alembic 迁移，创建商品、SKU、知识块、Trace 表，并启用 pgvector 扩展。
+3. 将商品 JSON 切成知识块，为每个 chunk 调用百炼 embedding，并写入 `knowledge_chunks.embedding vector`。
+4. 为图片输入预留图片向量检索接口；如果百炼侧图片 embedding 未在当前 SDK/HTTP 接口中启用，先保留结构和事件 Trace。
+5. 接入百炼 LLM，用于意图增强、澄清问题、导购总结、商品问答和售后话术。
+6. 接入百炼 rerank，把混合召回结果交给 rerank 模型精排。
+7. 将检索从内存 demo 逐步切到数据库：结构化约束 + BM25/关键词候选 + pgvector 语义候选 + RRF + 百炼 rerank。
+8. 提供正式聊天前端，支持 SSE 事件分流渲染：`thinking`、`product_card`、`clarification`、`answer`、`order_preview`、`after_sale_preview`、`final`。
+9. 让每轮 chat 的 LLM 调用、SSE 事件、检索 Trace 能在可观测界面中查看。
+10. 保持第一阶段已有测试继续通过。
 
 ## 非目标
 
-1. 本 Sprint 不接真实 LLM。
-2. 本 Sprint 不实现真实 embedding 生成。
-3. 本 Sprint 不把混合检索切到数据库查询。
-4. 本 Sprint 不做正式聊天前端页面。
-5. 本 Sprint 不要求本地必须启动 PostgreSQL；自动化测试使用 SQLite 内存库验证仓储和迁移核心逻辑。
+1. 本阶段不接真实支付、真实订单和真实售后系统，订单/售后仍使用 mock 工具。
+2. 本阶段不做用户登录、权限和多租户。
+3. 本阶段不做大规模生产级索引调优，只实现可运行、可观测、可迭代的真实链路。
+4. 本阶段不把 API key 写入代码、测试或提交历史。
 
-## 推荐方案
+## 方案选择
 
-采用“数据库底座先行”的方案：
+### 方案 A：一次性真实闭环（推荐）
 
-- FastAPI 通过 `mallpilot.app.db.session` 暴露数据库依赖。
-- Alembic 使用现有 SQLAlchemy `Base.metadata` 作为模型来源。
-- CLI 脚本复用已有 `load_product_files()` 和 `persist_products()`，新增 `run_ingestion()` 负责编排数据库会话和事务。
-- 向量字段先以 JSON 列表达，命名为 `text_embedding`、`image_embedding`，值为 `list[float] | None`。
-- Trace 数据库服务封装 `TraceRepository`，提供与内存 `TraceService` 接近的 `record()` 和 `list_events()` 接口。
+一次性完成数据库、pgvector、百炼模型、检索切换和正式前端，但按任务拆分提交。优点是能尽快形成可演示产品闭环；缺点是 Sprint 变大，需要严格 TDD 和阶段性验收。
 
-选择 JSON 而不是立刻引入 pgvector 类型，是为了让测试和开发不依赖本机 PostgreSQL 扩展，同时保留字段边界。后续切换 pgvector 时只需要调整模型列类型、migration 和检索查询实现。
+### 方案 B：后端真实化优先，前端后置
 
-## 组件设计
+先完成 pgvector 和百炼模型，前端仍使用接口测试。优点是后端风险更集中；缺点是用户看不到完整体验，SSE 事件设计不容易被真实界面验证。
 
-### 数据库连接
+### 方案 C：前端优先，模型继续 mock
 
-新增 `mallpilot/app/db/session.py`：
+先做聊天界面和事件渲染，再替换真实模型。优点是界面反馈快；缺点是检索和答案质量仍不可信。
 
-- `create_engine_from_settings(database_url: str | None = None) -> Engine`
-- `create_session_factory(engine: Engine) -> sessionmaker[Session]`
-- `get_db() -> Generator[Session, None, None]`
+本 Sprint 采用方案 A，但执行上拆成小任务：安全配置、数据库迁移、百炼客户端、embedding 入库、数据库检索、rerank、LLM Flow、前端、Trace 串联。每个任务必须有测试和提交。
 
-该模块只负责连接和会话生命周期，不包含业务写入逻辑。
+## 安全与配置
 
-### Alembic 迁移
-
-新增：
-
-- `alembic.ini`
-- `migrations/env.py`
-- `migrations/versions/202607120001_create_core_tables.py`
-
-首个 migration 创建：
-
-- `products`
-- `product_skus`
-- `knowledge_chunks`
-- `trace_events`
-
-迁移脚本必须与当前模型字段保持一致，并包含向量 JSON 字段。
-
-### 模型扩展
-
-修改：
-
-- `mallpilot/app/models/product.py`
-
-新增字段：
-
-- `Product.image_embedding`
-- `KnowledgeChunk.text_embedding`
-
-字段类型先使用 JSON，可为空。
-
-### 入库命令
-
-修改：
-
-- `scripts/ingest_products.py`
-
-新增：
-
-- `run_ingestion(database_url: str | None = None, dataset_dir: str | None = None) -> int`
-
-行为：
-
-1. 从配置读取默认数据库连接和数据目录。
-2. 读取商品 JSON。
-3. 创建数据库会话。
-4. 调用 `persist_products()`。
-5. 成功提交事务并返回导入商品数量。
-6. 失败时回滚并抛出异常。
-
-### Trace 数据库服务
-
-新增：
-
-- `mallpilot/app/services/db_trace_service.py`
-
-接口：
-
-- `record(event: TraceEvent) -> None`
-- `list_events(turn_id: str) -> list[TraceEvent]`
-
-它复用 `TraceRepository`，把数据库行还原成现有 Pydantic `TraceEvent`，不改变 API 层现有响应结构。
-
-## 数据流
-
-商品入库：
+`.env` 存放本地密钥，禁止提交。配置字段：
 
 ```text
-/data JSON -> load_product_files -> build_knowledge_chunks -> ProductRepository -> database
+BAILIAN_API_KEY
+DASHSCOPE_API_KEY
+BAILIAN_LLM_MODEL
+BAILIAN_EMBEDDING_MODEL
+BAILIAN_RERANK_MODEL
+DATABASE_URL
 ```
 
-Trace 落库：
+应用通过 `Settings` 读取配置。代码、测试、文档示例只出现变量名，不出现真实 key。
+
+## 数据库设计
+
+数据库使用 PostgreSQL + pgvector。
+
+核心表：
+
+- `products`：商品主表，保存商品基础信息、主图、原始 JSON。
+- `product_skus`：SKU 表，保存规格、价格和商品关联。
+- `knowledge_chunks`：知识块表，保存 chunk 类型、标题、正文、元数据和 `embedding vector`。
+- `trace_events`：Trace 表，保存每轮 chat 的 LLM、检索、SSE、工具调用事件。
+
+`knowledge_chunks.embedding` 使用 pgvector 类型。embedding 维度从百炼 embedding 模型配置中固定，迁移脚本和向量校验保持一致。
+
+## 百炼集成
+
+新增模型客户端层，隔离外部平台细节：
+
+- `BailianClient.chat(messages, trace_context) -> LlmResult`
+- `BailianClient.embed_texts(texts, trace_context) -> list[list[float]]`
+- `BailianClient.rerank(query, documents, trace_context) -> list[RerankScore]`
+
+客户端职责：
+
+1. 读取 `.env` 配置。
+2. 发送 HTTP 请求到百炼兼容接口。
+3. 记录模型名、耗时、token 或返回摘要到 Trace。
+4. 屏蔽 key，不写入日志和 Trace。
+5. 在测试中通过 fake transport 或 monkeypatch 验证请求结构，不调用真实外网。
+
+## 入库流程
+
+商品入库流程：
 
 ```text
-TraceEvent -> DbTraceService.record -> TraceRepository.save -> trace_events
+/data 商品 JSON
+-> load_product_files()
+-> build_knowledge_chunks()
+-> BailianClient.embed_texts()
+-> ProductRepository.save_product()
+-> ProductRepository.save_chunks_with_embeddings()
+-> PostgreSQL + pgvector
 ```
 
-后续检索预留：
+入库 CLI 提供：
 
 ```text
-knowledge_chunks.text_embedding / products.image_embedding -> database retrieval -> RRF -> rerank
+python -m scripts.ingest_products
 ```
 
-## 错误处理
+默认读取 `Settings.dataset_dir` 和 `Settings.database_url`。失败时事务回滚，并输出失败原因。
 
-1. 入库过程中任何异常都会回滚当前事务。
-2. `get_db()` 在请求结束后关闭 session。
-3. Trace 查询找不到轮次时返回空列表。
-4. 配置缺失时使用 `Settings` 默认值，不在本 Sprint 引入复杂配置校验。
+## 检索流程
+
+导购意图走数据库检索：
+
+```text
+用户消息
+-> Router 识别 guide/product_qa
+-> 约束抽取
+-> 结构化过滤候选
+-> BM25/关键词候选
+-> pgvector 语义候选
+-> 图片向量候选（有图片时）
+-> RRF 融合
+-> 百炼 rerank
+-> ProductCandidate
+-> GuideFlow / ProductQaFlow
+```
+
+如果缺少关键约束，例如预算、品类、使用场景，Flow 发 `clarification` SSE 事件，而不是强行推荐。
+
+## 前端设计
+
+新增正式聊天界面，第一屏就是可用聊天工作台，不做营销落地页。
+
+页面区域：
+
+1. 左侧：会话列表和新建会话。
+2. 中间：聊天消息流，按 SSE 事件渲染。
+3. 右侧：当前轮 Trace 摘要、检索阶段、LLM 调用摘要。
+
+事件渲染：
+
+- `thinking`：显示模型正在分析的轻量状态。
+- `product_card`：展示商品图、标题、价格、推荐理由和证据。
+- `clarification`：展示需要用户补充的信息。
+- `answer`：展示商品问答答案。
+- `order_preview`：展示 mock 订单预览。
+- `after_sale_preview`：展示 mock 售后预览。
+- `final`：结束当前轮输出。
+
+前端可以先使用原生 HTML/CSS/JS 扩展现有 FastAPI 静态页，也可以在后续 Sprint 切到 React/Vue。当前 Sprint 以少依赖、可运行为优先。
+
+## 可观测设计
+
+每轮 chat 至少记录：
+
+1. `router.intent`：意图、置信度、实体。
+2. `retrieval.constraints`：约束抽取结果。
+3. `retrieval.bm25`：关键词候选。
+4. `retrieval.vector`：pgvector 候选。
+5. `retrieval.rrf`：融合结果。
+6. `rerank.bailian`：重排请求摘要和结果排序。
+7. `llm.bailian`：LLM 调用摘要、耗时、模型名。
+8. `sse.emit`：前端事件类型和序号。
+
+Trace 不记录 API key，不记录完整敏感请求头。
 
 ## 测试策略
 
-1. 新增数据库 session 测试，验证 `get_db()` 能提供可用 session 并正确关闭。
-2. 新增入库 CLI 测试，使用 SQLite 内存库验证 `run_ingestion()` 返回导入数量并写入商品。
-3. 新增 migration 结构测试，验证首个 migration 包含核心表名和向量字段名。
-4. 新增 Trace 数据库服务测试，验证事件可写入并按 `turn_id` 查询。
-5. 运行全量 `pytest -v`，保证第一阶段 20 个测试继续通过。
+1. 配置测试：验证 `.env` 字段能被 `Settings` 读取，且 `.env` 在 `.gitignore` 中。
+2. Alembic 测试：验证 migration 包含 pgvector 扩展、核心表和 `embedding` 字段。
+3. 百炼客户端测试：使用 fake HTTP 响应验证 chat、embedding、rerank 的请求解析与返回映射。
+4. 入库测试：使用 fake embedding 生成固定维度向量，验证 chunk 会携带 embedding 写入仓储。
+5. 检索测试：使用可控候选验证数据库检索门面会产出 BM25、vector、RRF、rerank Trace。
+6. Flow 测试：验证导购和问答会调用真实模型接口抽象，而不是旧 mock 文案。
+7. 前端 API 测试：验证聊天页面可打开，SSE 返回可被事件类型分流。
+8. 全量测试：运行 `pytest -v`，确保第一阶段能力不回退。
 
 ## 验收标准
 
-1. 所有新增测试先失败、实现后通过。
-2. 全量测试通过。
-3. 本 Sprint 每个独立任务都有对应提交。
-4. `.idea/` 不进入提交。
-5. 不改动现有 Flow 对外行为。
+1. `.env` 已在本地创建，`.gitignore` 忽略 `.env`。
+2. 数据库 migration 支持 PostgreSQL + pgvector。
+3. 商品 chunk 入库时写入真实 embedding。
+4. 导购检索链路使用数据库候选和百炼 rerank。
+5. 导购回复和问答回复通过百炼 LLM 生成。
+6. 正式聊天前端能通过浏览器访问，并正确渲染至少 `thinking`、`product_card`、`clarification`、`final`。
+7. 可观测页面能查看 LLM、检索、SSE Trace。
+8. 所有新增代码有测试，且全量测试通过。
+
+## 风险与处理
+
+1. 百炼接口细节可能和预期不一致：客户端层集中封装，先用测试锁定内部接口，真实调用问题单点修复。
+2. pgvector 本地环境可能未安装：migration 明确启用扩展，测试用脚本静态校验，真实运行前给出数据库准备命令。
+3. Sprint 范围较大：按任务小步提交，每完成一个子闭环就跑对应测试和全量关键测试。
+4. API key 泄露风险：只放 `.env`，不提交，不写入 Trace，不在终端输出。
 
 ## 后续衔接
 
-Sprint 1 完成后，下一阶段可以进入数据库检索真实化：
+Sprint 1 完成后，下一阶段可以继续做：
 
-1. 为知识块生成真实文本 embedding。
-2. 为商品图片生成图片 embedding。
-3. 将 BM25 和向量召回从内存列表切到数据库候选。
-4. 把可观测 Trace 从内存 Store 切到数据库 Store。
+1. 图片 embedding 的真实模型接入和图片向量检索。
+2. 订单、售后接真实电商系统。
+3. 前端工程化为 React/Vue。
+4. 检索评测集、召回率和重排质量评估。
