@@ -7,17 +7,23 @@
   </head>
   <body>
     <main class="layout">
-      <section class="panel">
+      <section class="panel sidebar">
         <h1>MallPilot Observability</h1>
-        <div id="sessions">会话列表</div>
+        <label class="field-label" for="turnSelect">观测轮次</label>
+        <div class="turn-picker">
+          <select id="turnSelect"></select>
+          <button id="refreshTurns" type="button">刷新</button>
+        </div>
+        <div id="summary" class="summary">暂无可观测轮次</div>
       </section>
-      <section class="panel">
-        <h2>Timeline</h2>
-        <div id="timeline"></div>
+      <section class="panel timeline-panel">
+        <h2>调用链</h2>
+        <div id="groups" class="groups"></div>
+        <div id="timeline" class="timeline"></div>
       </section>
-      <section class="panel">
-        <h2>Event Detail</h2>
-        <pre id="detail">{}</pre>
+      <section class="panel detail-panel">
+        <h2>事件详情</h2>
+        <div id="detail" class="detail-empty">请选择一条事件</div>
       </section>
     </main>
     <script src="/admin/static/app.js"></script>
