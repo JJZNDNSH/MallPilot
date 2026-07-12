@@ -26,3 +26,14 @@ def test_chat_app_javascript_supports_sse_event_types():
     assert "clarification" in response.text
     assert "thinking" in response.text
     assert "after_sale_preview" in response.text
+
+
+# 验证 Trace 详情会渲染到右侧面板，而不是混入聊天消息。
+def test_chat_app_keeps_trace_payload_out_of_conversation():
+    client = TestClient(app)
+
+    response = client.get("/chat/static/app.js")
+
+    assert response.status_code == 200
+    assert "traceDetail" in response.text
+    assert 'appendMessage("assistant subtle", JSON.stringify' not in response.text

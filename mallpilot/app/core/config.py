@@ -14,12 +14,16 @@ class Settings(BaseSettings):
     dashscope_api_key: str | None = None
     # 百炼 OpenAI 兼容接口基础地址。
     bailian_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    # 百炼 Rerank 专属兼容接口基础地址，通常是业务空间 maas 域名。
+    bailian_rerank_base_url: str | None = None
     # 百炼导购对话模型名称。
     bailian_llm_model: str = "qwen-plus"
     # 百炼文本向量模型名称。
     bailian_embedding_model: str = "text-embedding-v4"
     # 百炼重排模型名称。
     bailian_rerank_model: str = "qwen3-rerank"
+    # 百炼重排模型指令，用于约束 query 与候选文本的相关性判断方式。
+    bailian_rerank_instruct: str = "Given a web search query, retrieve relevant passages that answer the query."
     # 文本向量维度，需与入库和 pgvector migration 保持一致。
     embedding_dimension: int = 1024
 

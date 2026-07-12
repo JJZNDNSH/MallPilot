@@ -66,6 +66,14 @@ def test_trace_turns_api_returns_dropdown_options(monkeypatch):
 # 验证 summary 接口返回分组后的调用链摘要。
 def test_trace_summary_api_returns_grouped_summary(monkeypatch):
     monkeypatch.setattr(trace_api.trace_service, "list_events", lambda turn_id: [
+        TraceEvent(
+            chat_id="chat_1",
+            turn_id=turn_id,
+            event_type="user.message",
+            span_name="user",
+            payload={"message": "推荐手机"},
+            timestamp=datetime(2026, 7, 12, 9, 59, 0, tzinfo=timezone.utc),
+        ),
         make_trace_event(turn_id, "router.intent", duration_ms=5),
         make_trace_event(turn_id, "llm.bailian", duration_ms=1200),
     ])
@@ -76,6 +84,7 @@ def test_trace_summary_api_returns_grouped_summary(monkeypatch):
     assert response.status_code == 200
     data = response.json()
     assert data["turn_id"] == "turn_1"
+    assert data["input"]["message"] == "推荐手机"
     assert data["event_count"] == 2
     assert data["total_duration_ms"] == 1205
     assert [group["name"] for group in data["groups"]] == ["router", "llm"]
@@ -94,6 +103,7 @@ def test_trace_summary_api_returns_empty_summary_when_trace_service_fails(monkey
     assert response.status_code == 200
     assert response.json() == {
         "turn_id": "turn_missing",
+        "input": None,
         "event_count": 0,
         "error_count": 0,
         "total_duration_ms": 0,

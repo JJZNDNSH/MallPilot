@@ -231,6 +231,20 @@ h1 {
   font-size: 16px;
 }
 
+.product-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sku-summary {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .product-meta {
   display: flex;
   justify-content: space-between;
@@ -286,6 +300,21 @@ h1 {
 .trace-list {
   display: grid;
   gap: 8px;
+}
+
+.trace-detail {
+  min-height: 180px;
+  max-height: 38vh;
+  margin: 14px 0 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  color: var(--ink);
+  background: #fff;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .trace-item {

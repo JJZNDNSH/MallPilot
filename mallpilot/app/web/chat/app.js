@@ -4,6 +4,7 @@ const input = document.querySelector("#messageInput");
 const turnStatus = document.querySelector("#turnStatus");
 const traceList = document.querySelector("#traceList");
 const traceCount = document.querySelector("#traceCount");
+const traceDetail = document.querySelector("#traceDetail");
 const newChat = document.querySelector("#newChat");
 
 let chatId = localStorage.getItem("mallpilot.chatId") || null;
@@ -31,21 +32,31 @@ function appendProductCard(payload) {
   card.className = "product-card";
   const image = document.createElement("div");
   image.className = "product-image";
+
   if (payload.image_url) {
     image.style.backgroundImage = `url("${payload.image_url}")`;
   } else {
     image.textContent = "MP";
   }
+
   const body = document.createElement("div");
   body.className = "product-body";
+  const reasons = Array.isArray(payload.reasons) ? payload.reasons.filter(Boolean) : [];
+  const reasonText = payload.reason || reasons[0] || payload.evidence?.[0]?.summary || "已匹配你的需求";
+  const categoryText = [payload.brand, payload.category, payload.sub_category].filter(Boolean).join(" / ");
   body.innerHTML = `
     <h3>${escapeHtml(payload.title || "商品")}</h3>
-    <p>${escapeHtml(payload.reason || payload.evidence?.[0]?.summary || "已匹配你的需求")}</p>
+    <p>${escapeHtml(reasonText)}</p>
+    <div class="product-tags">
+      <span>${escapeHtml(categoryText || "商品信息待补充")}</span>
+    </div>
+    ${payload.sku_summary ? `<small class="sku-summary">${escapeHtml(payload.sku_summary)}</small>` : ""}
     <div class="product-meta">
       <span>${payload.price ? `¥${payload.price}` : "价格待确认"}</span>
       <span>${escapeHtml(payload.product_id || "")}</span>
     </div>
   `;
+
   card.append(image, body);
   row.appendChild(card);
   messages.appendChild(row);
@@ -55,12 +66,11 @@ function appendProductCard(payload) {
 // 按 SSE 类型分流渲染。
 function renderEvent(event) {
   currentTurnId = event.turn_id || currentTurnId;
-  traceEvents.push({ type: event.type, seq: event.seq, payload: event.payload || {} });
-  renderTrace();
+  mergeTraceEvent({ type: event.type, seq: event.seq, payload: event.payload || {}, source: "sse" });
 
   if (event.type === "thinking") {
     turnStatus.textContent = event.payload?.stage || "thinking";
-    appendMessage("assistant subtle", event.payload?.message || "Thinking");
+    appendMessage("assistant subtle", event.payload?.message || "正在处理");
     return;
   }
   if (event.type === "product_card") {
@@ -89,7 +99,17 @@ function renderEvent(event) {
   }
 }
 
-// 渲染右侧 Trace 轨道。
+// 合并 Trace 事件，避免 SSE 事件和持久化事件重复刷屏。
+function mergeTraceEvent(item) {
+  const key = `${item.source || "runtime"}:${item.type}:${item.seq || "-"}:${JSON.stringify(item.payload || {})}`;
+  if (traceEvents.some((event) => event.key === key)) {
+    return;
+  }
+  traceEvents.push({ ...item, key });
+  renderTrace();
+}
+
+// 渲染右侧 Trace 列表。
 function renderTrace() {
   traceCount.textContent = String(traceEvents.length);
   traceList.innerHTML = "";
@@ -98,9 +118,26 @@ function renderTrace() {
     node.className = "trace-item";
     node.type = "button";
     node.innerHTML = `<span>${escapeHtml(item.type)}</span><small>#${item.seq || "-"}</small>`;
-    node.addEventListener("click", () => appendMessage("assistant subtle", JSON.stringify(item.payload, null, 2)));
+    node.addEventListener("click", () => renderTraceDetail(item));
     traceList.appendChild(node);
   }
+}
+
+// 在右侧详情区展示 Trace payload。
+function renderTraceDetail(item) {
+  if (!traceDetail) {
+    return;
+  }
+  traceDetail.textContent = JSON.stringify(
+    {
+      type: item.type,
+      seq: item.seq,
+      source: item.source,
+      payload: item.payload,
+    },
+    null,
+    2,
+  );
 }
 
 // 从后端 Trace API 补充持久化事件。
@@ -114,9 +151,13 @@ async function loadTraceFromApi() {
   }
   const rows = await response.json();
   for (const row of rows) {
-    traceEvents.push({ type: row.event_type, seq: row.payload?.seq, payload: row.payload || {} });
+    mergeTraceEvent({
+      type: row.event_type,
+      seq: row.payload?.seq,
+      payload: row.payload || {},
+      source: row.span_name || "trace",
+    });
   }
-  renderTrace();
 }
 
 // 发送聊天请求并解析 SSE。
@@ -125,12 +166,19 @@ async function sendMessage(message) {
   turnStatus.textContent = "streaming";
   traceEvents = [];
   renderTrace();
+  renderTraceDetail({ type: "turn.start", payload: { message }, source: "ui" });
 
   const response = await fetch("/api/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: chatId, message }),
   });
+
+  if (!response.ok || !response.body) {
+    appendMessage("assistant clarify", "服务暂时不可用，请稍后再试。");
+    turnStatus.textContent = "error";
+    return;
+  }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8");
@@ -189,5 +237,6 @@ newChat.addEventListener("click", () => {
   messages.innerHTML = "";
   traceEvents = [];
   renderTrace();
+  renderTraceDetail({ type: "ready", payload: {}, source: "ui" });
   appendMessage("assistant", "告诉我预算、品类、使用场景，我来筛选商品。");
 });

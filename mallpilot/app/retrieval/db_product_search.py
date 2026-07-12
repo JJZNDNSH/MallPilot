@@ -19,6 +19,8 @@ class DatabaseProductSearch:
         self.session = session
         # 百炼客户端用于 query embedding 和 rerank，测试可注入 fake。
         self.bailian_client = bailian_client or BailianClient()
+        # 最近一次 rerank 错误，写入 Trace 方便观测面板排查。
+        self.last_rerank_error: str | None = None
 
     # 执行数据库混合检索。
     def search(
@@ -29,6 +31,8 @@ class DatabaseProductSearch:
         top_k: int = 5,
     ) -> tuple[list[ProductCandidate], list[TraceEvent]]:
         active_filters = filters or {}
+        # 每次检索开始前清理上一轮 rerank 错误。
+        self.last_rerank_error = None
         documents = self._load_documents(active_filters)
         bm25_results = BM25Search(documents).search(query, active_filters, top_k=top_k * 4)
         vector_results = self._vector_search(query, documents, top_k=top_k * 4)
@@ -48,6 +52,10 @@ class DatabaseProductSearch:
         # 结构化过滤先在数据库侧完成，减少后续召回候选规模。
         if filters.get("category"):
             statement = statement.where(Product.category == filters["category"])
+        if filters.get("sub_category"):
+            statement = statement.where(Product.sub_category == filters["sub_category"])
+        if filters.get("brand"):
+            statement = statement.where(Product.brand == filters["brand"])
         if filters.get("budget_max") is not None:
             statement = statement.where(Product.base_price <= float(filters["budget_max"]))
 
@@ -58,11 +66,13 @@ class DatabaseProductSearch:
                 "title": product.title,
                 "brand": product.brand,
                 "category": product.category,
+                "sub_category": product.sub_category,
                 "price": float(product.base_price or 0),
                 "image_url": product.image_url,
                 "content": chunk.content,
                 "chunk_type": chunk.chunk_type,
                 "embedding": chunk.embedding,
+                "sku_summary": _build_sku_summary(product.raw_json),
             })
         return documents
 
@@ -91,7 +101,13 @@ class DatabaseProductSearch:
             return []
 
         documents = [item["document"].get("content", "") for item in fused]
-        scores = self.bailian_client.rerank(query, documents, top_n=top_k)
+        try:
+            # 百炼 rerank 失败时不影响召回结果展示，后续通过 Trace 暴露错误。
+            scores = self.bailian_client.rerank(query, documents, top_n=top_k)
+        except Exception as exc:
+            self.last_rerank_error = str(exc.__class__.__name__)
+            return [{**item, "final_score": float(item.get("rrf_score", 0.0))} for item in fused]
+
         if not scores:
             return [{**item, "final_score": float(item.get("rrf_score", 0.0))} for item in fused]
 
@@ -116,18 +132,35 @@ class DatabaseProductSearch:
                 price=float(document.get("price") or 0),
                 image_url=document.get("image_url"),
                 score=float(item.get("final_score", item.get("rrf_score", 0.0))),
-                evidence=[{"source": "database_retrieval", "summary": document.get("content", "")}],
+                evidence=[{
+                    "source": "database_retrieval",
+                    "summary": _shorten_summary(document.get("content", "")),
+                    "raw_summary": document.get("content", ""),
+                    "sub_category": document.get("sub_category"),
+                    "sku_summary": document.get("sku_summary"),
+                }],
             ))
         return candidates
 
     # 构造检索 Trace。
     def _build_trace(self, bm25_count: int, vector_count: int, fused_count: int, rerank_count: int) -> list[TraceEvent]:
-        return [
+        trace = [
             _trace("retrieval.bm25", {"count": bm25_count}),
             _trace("retrieval.vector", {"count": vector_count}),
             _trace("retrieval.rrf", {"count": fused_count}),
             _trace("rerank.bailian", {"count": rerank_count}),
         ]
+        if self.last_rerank_error is not None:
+            # rerank 失败不阻塞推荐，但要在 Trace 中显式标记。
+            trace.append(TraceEvent(
+                chat_id="retrieval",
+                turn_id="retrieval",
+                event_type="rerank.error",
+                span_name="database_product_search",
+                payload={"message": self.last_rerank_error},
+                status="error",
+            ))
+        return trace
 
 
 # 计算两个向量的余弦相似度。
@@ -138,6 +171,30 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
     if left_norm == 0 or right_norm == 0:
         return 0.0
     return dot / (left_norm * right_norm)
+
+
+# 构造 SKU 摘要，避免前端商品卡直接展示完整 raw_json。
+def _build_sku_summary(raw_json: dict[str, Any]) -> str:
+    skus = raw_json.get("skus", []) if raw_json else []
+    if not skus:
+        return ""
+
+    summaries: list[str] = []
+    for sku in skus[:3]:
+        # SKU 属性通常包含容量、存储、版本等导购关键信息。
+        properties = sku.get("properties", {})
+        property_text = "，".join(f"{key}:{value}" for key, value in properties.items())
+        price_text = f"¥{float(sku.get('price', 0)):.0f}" if sku.get("price") is not None else "价格待确认"
+        summaries.append(f"{property_text} {price_text}".strip())
+    return "；".join(summaries)
+
+
+# 压缩证据摘要，保证商品卡理由短而可读。
+def _shorten_summary(content: str, max_length: int = 96) -> str:
+    text = " ".join(str(content).split())
+    if len(text) <= max_length:
+        return text
+    return f"{text[:max_length]}..."
 
 
 # 创建检索 Trace 事件。

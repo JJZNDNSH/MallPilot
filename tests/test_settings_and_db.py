@@ -21,6 +21,7 @@ def test_settings_expose_bailian_and_embedding_defaults(monkeypatch):
     assert settings.bailian_llm_model == "qwen-plus"
     assert settings.bailian_embedding_model == "text-embedding-v4"
     assert settings.bailian_rerank_model == "qwen3-rerank"
+    assert settings.bailian_rerank_instruct
     assert settings.embedding_dimension == 1024
 
 

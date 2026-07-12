@@ -71,6 +71,23 @@ dd {
   margin-bottom: 12px;
 }
 
+.user-input {
+  margin-bottom: 12px;
+  padding: 10px;
+  background: #eef6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+}
+
+.user-input p {
+  margin: 8px 0;
+  line-height: 1.5;
+}
+
+.user-input small {
+  color: #4b5563;
+}
+
 .group-card {
   display: grid;
   gap: 4px;

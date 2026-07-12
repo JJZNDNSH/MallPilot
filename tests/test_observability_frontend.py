@@ -11,6 +11,7 @@ def test_observability_page_has_turn_selector():
     assert 'id="turnSelect"' in html
     assert 'id="refreshTurns"' in html
     assert 'id="summary"' in html
+    assert 'id="userInput"' in html
     assert 'id="groups"' in html
 
 
@@ -21,6 +22,7 @@ def test_observability_script_uses_turns_and_summary_api():
     assert "fetch('/api/trace/turns')" in script
     assert "fetch(`/api/trace/turns/${turnId}/summary`)" in script
     assert "renderTurnOptions" in script
+    assert "renderUserInput" in script
     assert "renderGroups" in script
     assert "renderTimeline" in script
     assert "renderDetail" in script

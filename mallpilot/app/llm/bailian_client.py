@@ -22,8 +22,9 @@ class BailianClient:
         self.api_key = api_key or self.settings.dashscope_api_key or self.settings.bailian_api_key
         # OpenAI 兼容 Chat 和 Embedding 接口基础地址。
         self.base_url = (base_url or self.settings.bailian_base_url).rstrip("/")
-        # Qwen3 Rerank 使用 compatible-api 路径，允许测试或配置覆盖。
-        self.rerank_base_url = (rerank_base_url or self.base_url.replace("compatible-mode", "compatible-api")).rstrip("/")
+        # Qwen3 Rerank 使用业务空间 compatible-api 地址，允许测试或 .env 覆盖。
+        configured_rerank_url = rerank_base_url or self.settings.bailian_rerank_base_url
+        self.rerank_base_url = (configured_rerank_url or self.base_url.replace("compatible-mode", "compatible-api")).rstrip("/")
         # HTTP 客户端可由测试注入 fake transport。
         self.http_client = http_client or httpx.Client(timeout=30)
 
@@ -66,6 +67,7 @@ class BailianClient:
             "model": self.settings.bailian_rerank_model,
             "query": query,
             "documents": documents,
+            "instruct": self.settings.bailian_rerank_instruct,
         }
         if top_n is not None:
             payload["top_n"] = top_n

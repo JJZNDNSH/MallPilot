@@ -43,15 +43,16 @@ class GuideFlow(BaseFlow):
             ))
             seq += 1
         else:
-            # 有结果时输出商品卡片事件。
-            events.append(SseEvent(
-                type="product_card",
-                chat_id=context.chat_id,
-                turn_id=context.turn_id,
-                seq=seq,
-                payload=build_product_card(candidates[0]),
-            ))
-            seq += 1
+            # 有结果时输出前 3 个商品卡片事件，前端按 SSE 顺序连续渲染。
+            for candidate in candidates[:3]:
+                events.append(SseEvent(
+                    type="product_card",
+                    chat_id=context.chat_id,
+                    turn_id=context.turn_id,
+                    seq=seq,
+                    payload=build_product_card(candidate),
+                ))
+                seq += 1
 
             if self.llm_service is not None:
                 # 注入 LLM 服务时，额外输出模型生成的导购总结。

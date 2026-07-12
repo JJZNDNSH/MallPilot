@@ -5,16 +5,22 @@ from mallpilot.app.services.trace_summary import build_empty_trace_summary, buil
 
 
 # 构造测试 Trace 事件。
-def make_event(event_type: str, status: str = "ok", duration_ms: int | None = None) -> TraceEvent:
+def make_event(
+    event_type: str,
+    status: str = "ok",
+    duration_ms: int | None = None,
+    minute: int = 0,
+    payload: dict | None = None,
+) -> TraceEvent:
     return TraceEvent(
         chat_id="chat_1",
         turn_id="turn_1",
         event_type=event_type,
         span_name=event_type.replace(".", "_"),
-        payload={"sample": event_type},
+        payload=payload or {"sample": event_type},
         status=status,
         duration_ms=duration_ms,
-        timestamp=datetime(2026, 7, 12, 10, 0, 0, tzinfo=timezone.utc),
+        timestamp=datetime(2026, 7, 12, 10, minute, 0, tzinfo=timezone.utc),
     )
 
 
@@ -40,6 +46,7 @@ def test_build_empty_trace_summary_returns_stable_shape():
 
     assert summary == {
         "turn_id": "turn_missing",
+        "input": None,
         "event_count": 0,
         "error_count": 0,
         "total_duration_ms": 0,
@@ -51,17 +58,19 @@ def test_build_empty_trace_summary_returns_stable_shape():
 # 验证 summary 汇总数量、错误数、耗时和分组。
 def test_build_trace_summary_groups_events_and_sums_duration():
     events = [
-        make_event("router.intent", duration_ms=5),
-        make_event("retrieval.vector", duration_ms=80),
-        make_event("rerank.bailian", duration_ms=120),
-        make_event("llm.bailian", duration_ms=1100),
-        make_event("sse.emit"),
-        make_event("retrieval.error", status="error", duration_ms=10),
+        make_event("user.message", minute=0, payload={"message": "推荐手机"}),
+        make_event("router.intent", duration_ms=5, minute=1),
+        make_event("retrieval.vector", duration_ms=80, minute=2),
+        make_event("rerank.bailian", duration_ms=120, minute=3),
+        make_event("llm.bailian", duration_ms=1100, minute=4),
+        make_event("sse.emit", minute=5),
+        make_event("retrieval.error", status="error", duration_ms=10, minute=6),
     ]
 
     summary = build_trace_summary("turn_1", events)
 
     assert summary["turn_id"] == "turn_1"
+    assert summary["input"]["message"] == "推荐手机"
     assert summary["event_count"] == 6
     assert summary["error_count"] == 1
     assert summary["total_duration_ms"] == 1315
@@ -70,3 +79,17 @@ def test_build_trace_summary_groups_events_and_sums_duration():
     assert groups["retrieval"]["duration_ms"] == 80
     assert groups["error"]["status"] == "error"
     assert len(summary["events"]) == 6
+
+
+# 验证用户输入固定抽出，后续事件按真实时间顺序展示。
+def test_build_trace_summary_extracts_input_and_keeps_timeline_order():
+    events = [
+        make_event("llm.bailian", minute=3),
+        make_event("user.message", minute=1, payload={"message": "我要买耳机"}),
+        make_event("retrieval.vector", minute=2),
+    ]
+
+    summary = build_trace_summary("turn_1", events)
+
+    assert summary["input"]["message"] == "我要买耳机"
+    assert [event["event_type"] for event in summary["events"]] == ["retrieval.vector", "llm.bailian"]

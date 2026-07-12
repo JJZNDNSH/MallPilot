@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from mallpilot.app.agent.router import LlmIntentRouter
 from mallpilot.app.agent.schemas import ChatRequest, ProductCandidate
 from mallpilot.app.main import app
 from mallpilot.app.services.chat_service import ChatService
@@ -32,7 +33,10 @@ class FakeLlmService:
 
 
 # 验证正式闭环需要的路由已经注册。
-def test_app_registers_real_loop_routes():
+def test_app_registers_real_loop_routes(monkeypatch):
+    monkeypatch.setenv("USE_MOCK_LLM", "true")
+    # 路由注册测试只验证 HTTP 合同，运行时依赖用 fake search 固定住。
+    monkeypatch.setattr(ChatService, "from_runtime", classmethod(lambda cls: ChatService(search=FakeSearch())))
     client = TestClient(app)
 
     assert client.get("/chat").status_code == 200
@@ -48,6 +52,14 @@ def test_chat_service_wires_llm_service_without_leaking_secrets():
 
     assert "LLM 推荐总结" in payload
     assert "sk-" not in payload
+
+
+# 验证真实模型模式下运行时默认使用 LLM 路由器。
+def test_chat_service_runtime_uses_llm_router(monkeypatch):
+    monkeypatch.setenv("USE_MOCK_LLM", "false")
+    service = ChatService.from_runtime()
+
+    assert isinstance(service.router, LlmIntentRouter)
 
 
 # 验证 README 提供真实运行闭环命令。

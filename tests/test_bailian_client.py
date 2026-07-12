@@ -67,8 +67,10 @@ def test_bailian_client_embed_texts_maps_embeddings():
 # 验证百炼 Rerank 响应会映射为排序分数，且请求体不会包含密钥。
 def test_bailian_client_rerank_maps_scores_without_leaking_key():
     captured_body: dict[str, object] = {}
+    captured_urls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        captured_urls.append(str(request.url))
         captured_body.update(json.loads(request.content))
         return httpx.Response(
             200,
@@ -82,9 +84,12 @@ def test_bailian_client_rerank_maps_scores_without_leaking_key():
         )
 
     client = BailianClient(
-        settings=Settings(bailian_rerank_model="qwen3-rerank"),
+        settings=Settings(
+            bailian_rerank_base_url="https://example.com/compatible-api/v1",
+            bailian_rerank_model="qwen3-rerank",
+            bailian_rerank_instruct="Given a web search query, retrieve relevant passages that answer the query.",
+        ),
         api_key="test-key",
-        rerank_base_url="https://example.com/compatible-api/v1",
         http_client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
@@ -92,5 +97,8 @@ def test_bailian_client_rerank_maps_scores_without_leaking_key():
 
     assert [score.index for score in scores] == [1, 0]
     assert [score.score for score in scores] == [0.91, 0.23]
+    assert captured_urls == ["https://example.com/compatible-api/v1/reranks"]
     assert captured_body["model"] == "qwen3-rerank"
+    assert captured_body["top_n"] == 2
+    assert captured_body["instruct"] == "Given a web search query, retrieve relevant passages that answer the query."
     assert "test-key" not in json.dumps(captured_body, ensure_ascii=False)

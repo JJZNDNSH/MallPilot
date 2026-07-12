@@ -11,6 +11,7 @@ GROUP_ORDER = ["router", "retrieval", "rerank", "llm", "sse", "error", "other"]
 def build_empty_trace_summary(turn_id: str) -> dict[str, Any]:
     return {
         "turn_id": turn_id,
+        "input": None,
         "event_count": 0,
         "error_count": 0,
         "total_duration_ms": 0,
@@ -36,9 +37,11 @@ def build_trace_summary(turn_id: str, events: list[TraceEvent]) -> dict[str, Any
 
     # 按事件时间排序，保证摘要中的事件顺序稳定。
     sorted_events = sorted(events, key=lambda event: event.timestamp)
+    input_event = next((event for event in sorted_events if event.event_type == "user.message"), None)
+    execution_events = [event for event in sorted_events if event.event_type != "user.message"]
     groups: dict[str, dict[str, Any]] = {}
 
-    for event in sorted_events:
+    for event in execution_events:
         group_name = trace_group_name(event)
         if group_name not in groups:
             # 初始化阶段分组摘要。
@@ -65,9 +68,20 @@ def build_trace_summary(turn_id: str, events: list[TraceEvent]) -> dict[str, Any
     ordered_groups = [groups[name] for name in GROUP_ORDER if name in groups]
     return {
         "turn_id": turn_id,
-        "event_count": len(sorted_events),
-        "error_count": sum(1 for event in sorted_events if event.status == "error"),
-        "total_duration_ms": sum(event.duration_ms or 0 for event in sorted_events),
+        "input": _build_input_payload(input_event),
+        "event_count": len(execution_events),
+        "error_count": sum(1 for event in execution_events if event.status == "error"),
+        "total_duration_ms": sum(event.duration_ms or 0 for event in execution_events),
         "groups": ordered_groups,
-        "events": [event.model_dump(mode="json") for event in sorted_events],
+        "events": [event.model_dump(mode="json") for event in execution_events],
+    }
+
+
+# 构造顶部用户输入展示数据。
+def _build_input_payload(event: TraceEvent | None) -> dict[str, Any] | None:
+    if event is None:
+        return None
+    return {
+        "message": event.payload.get("message", ""),
+        "timestamp": event.timestamp.isoformat(),
     }

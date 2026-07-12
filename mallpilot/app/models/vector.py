@@ -1,40 +1,49 @@
 from typing import Any
 
+from pgvector.sqlalchemy import Vector as PgVector
 from sqlalchemy import JSON
-from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.types import TypeDecorator
 
 
-class Vector(TypeDecorator[list[float] | None]):
-    # SQLite 测试中使用 JSON 存储，PostgreSQL 编译时输出 pgvector 类型。
-    impl = JSON
-    # SQLAlchemy 缓存编译结果所需标记。
+class Vector(TypeDecorator[Any]):
+    # 默认底层类型使用 pgvector，PostgreSQL 会直接复用官方向量类型实现。
+    impl = PgVector
+    # 标记该自定义类型可安全参与 SQLAlchemy 编译缓存。
     cache_ok = True
 
     # 初始化向量字段类型。
     def __init__(self, dimensions: int):
-        # 向量维度，需要与 embedding 模型输出保持一致。
+        # 记录向量维度，必须与 embedding 模型输出维度一致。
         self.dimensions = dimensions
         super().__init__()
 
-    # 绑定参数前校验向量格式。
+    # 按数据库方言选择实际底层类型。
+    def load_dialect_impl(self, dialect: Any):
+        if dialect.name == "sqlite":
+            # SQLite 测试环境没有 pgvector，退化为 JSON 存储。
+            return dialect.type_descriptor(JSON())
+        # PostgreSQL 直接使用 pgvector 官方 SQLAlchemy 类型。
+        return dialect.type_descriptor(PgVector(self.dimensions))
+
+    # 在写入前统一把输入值规范成 float 列表。
     def process_bind_param(self, value: Any, dialect: Any) -> list[float] | None:
         if value is None:
             return None
-
-        # pgvector 和 SQLite 测试都使用 Python list 作为内部表示。
+        # 统一转换为 float，避免 int / Decimal 等类型混用。
         return [float(item) for item in value]
 
-    # 读取结果后保持 list[float] 表示。
+    # 在读取后统一返回 list[float]。
     def process_result_value(self, value: Any, dialect: Any) -> list[float] | None:
         if value is None:
             return None
 
-        # PostgreSQL 驱动或 SQLite JSON 都可能返回可迭代数值。
-        return [float(item) for item in value]
+        # SQLite JSON 回读通常已经是 list；PostgreSQL pgvector 回读可能是 list、tuple 或 numpy 数组。
+        if isinstance(value, (list, tuple)):
+            return [float(item) for item in value]
 
+        # 兼容 numpy.ndarray 等可迭代对象。
+        if hasattr(value, "tolist"):
+            return [float(item) for item in value.tolist()]
 
-# PostgreSQL 方言下把字段编译成 pgvector 的 VECTOR(n)。
-@compiles(Vector, "postgresql")
-def compile_vector_postgresql(type_: Vector, compiler: Any, **kwargs: Any) -> str:
-    return f"VECTOR({type_.dimensions})"
+        # 极端情况下数据库若返回单个数值，降级包装成单元素列表，避免 ORM 回读报错。
+        return [float(value)]
