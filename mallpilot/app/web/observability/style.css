@@ -1,0 +1,29 @@
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f6f7f9;
+  color: #1f2937;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 280px 1fr 420px;
+  gap: 12px;
+  padding: 12px;
+}
+
+.panel {
+  min-height: 80vh;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+}
+
+.timeline-item {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 8px;
+  text-align: left;
+}
