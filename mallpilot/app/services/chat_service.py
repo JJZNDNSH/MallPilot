@@ -12,6 +12,7 @@ from mallpilot.app.agent.schemas import ChatRequest, SseEvent, TraceEvent
 from mallpilot.app.agent.state import FlowContext
 from mallpilot.app.core.event_bus import EventBus
 from mallpilot.app.retrieval.product_search import HybridProductSearch
+from mallpilot.app.services.llm_service import LlmService
 from mallpilot.app.services.trace_service import TraceService
 from mallpilot.app.tools.cart_tools import CartStore
 
@@ -25,6 +26,7 @@ class ChatService:
         search: HybridProductSearch | Any | None = None,
         cart_store: CartStore | None = None,
         trace_service: TraceService | Any | None = None,
+        llm_service: LlmService | Any | None = None,
     ):
         # 意图路由器。
         self.router = router or IntentRouter()
@@ -38,6 +40,8 @@ class ChatService:
         self.cart_store = cart_store or CartStore()
         # Trace 服务，默认使用内存实现，后续应用装配可切换数据库实现。
         self.trace_service = trace_service or TraceService()
+        # 可选 LLM 服务，真实模式下由应用装配传入。
+        self.llm_service = llm_service
 
     # 流式返回 SSE 文本。
     def stream(self, request: ChatRequest) -> Iterator[str]:
@@ -65,14 +69,14 @@ class ChatService:
     # 选择业务 Flow。
     def _select_flow(self, intent: str):
         if intent == "product_qa":
-            return ProductQaFlow(search=self.search)
+            return ProductQaFlow(search=self.search, llm_service=self.llm_service)
         if intent == "cart":
             return CartFlow(cart_store=self.cart_store)
         if intent == "order":
             return OrderFlow()
         if intent == "after_sale":
             return AfterSaleFlow()
-        return GuideFlow(search=self.search)
+        return GuideFlow(search=self.search, llm_service=self.llm_service)
 
     # 记录普通 Trace 事件。
     def _record_trace(self, chat_id: str, turn_id: str, event_type: str, span_name: str, payload: dict[str, Any]) -> None:
