@@ -5,6 +5,7 @@ from sqlalchemy import DateTime, ForeignKey, JSON, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from mallpilot.app.models.base import Base
+from mallpilot.app.models.vector import Vector
 
 
 class Product(Base):
@@ -67,6 +68,8 @@ class KnowledgeChunk(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     # 知识块正文，用于 BM25、向量化和精排证据。
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # 知识块向量，PostgreSQL 使用 pgvector，SQLite 测试使用 JSON 兼容存储。
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
     # 知识块元数据，保留来源、FAQ 问题等辅助信息。
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     # 知识块创建时间。
