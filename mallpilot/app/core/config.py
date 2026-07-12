@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # 数据库连接字符串。
-    database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/mallpilot"
+    database_url: str = "postgresql+psycopg://postgres:postgres@192.168.154.128:5432/mallpilot"
     # 商品数据目录。
     dataset_dir: str = "data/ecommerce_agent_dataset"
     # 是否启用 mock LLM。
